@@ -31,7 +31,16 @@ fn main() {
     let mut build = Command::new(&zig);
     // Baseline CPU, never this machine's: hc is copied to other machines
     // (releases, `hc machine add`), whose CPUs may lack this one's features.
-    build.current_dir(&src).args(["build", "-Demit-lib-vt", "-Doptimize=ReleaseFast", "-Dcpu=baseline"]);
+    // Only the static archive is linked. Without this, Zig also builds an
+    // xcframework on macOS whenever xcodebuild is on PATH, which fails the
+    // build when Xcode itself is broken.
+    build.current_dir(&src).args([
+        "build",
+        "-Demit-lib-vt",
+        "-Demit-xcframework=false",
+        "-Doptimize=ReleaseFast",
+        "-Dcpu=baseline",
+    ]);
     if let Some(path) = clean_path {
         build.env("PATH", path);
     }
