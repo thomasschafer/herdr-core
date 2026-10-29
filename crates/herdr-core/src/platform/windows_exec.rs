@@ -26,6 +26,13 @@ pub fn own_shell() -> Vec<String> {
     [exe, "-NoExit", "-Command", hook].map(String::from).to_vec()
 }
 
+/// One argument as `own_shell` (PowerShell) reads it back, typed at its
+/// prompt: single quotes are literal, and PowerShell also takes the curly
+/// ones as quotes, so any of them inside has no quoting.
+pub fn quote_arg(arg: &str) -> Option<String> {
+    (!arg.contains(['\'', '\u{2018}', '\u{2019}', '\u{201a}', '\u{201b}'])).then(|| format!("'{arg}'"))
+}
+
 /// A shell line as this machine runs one: cmd reads the rest of its command
 /// line itself (`/s`: verbatim between the outer quotes), so the line goes
 /// raw, never quoted as an argument.

@@ -160,6 +160,14 @@ pub fn own_shell() -> Vec<String> {
     vec![std::env::var("SHELL").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "/bin/sh".into())]
 }
 
+/// One argument as `own_shell` reads it back, typed at its prompt. sh, bash,
+/// zsh, fish and nu all take single quotes literally, except that fish reads
+/// `\\` and `\'` in them and tcsh expands `!`: no quoting reads those back
+/// the same in all of them, so there is none.
+pub fn quote_arg(arg: &str) -> Option<String> {
+    (!arg.contains(['\'', '\\', '!'])).then(|| format!("'{arg}'"))
+}
+
 /// A shell line as this machine runs one.
 pub fn shell_line(line: &str) -> Vec<String> {
     vec!["sh".into(), "-c".into(), line.into()]
@@ -424,5 +432,16 @@ pub mod console {
         let mut buf = [0u8; 8192];
         let n = unsafe { libc::read(0, buf.as_mut_ptr().cast(), buf.len()) };
         (n > 0).then(|| buf[..n as usize].to_vec())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn arguments_any_unix_shell_reads_differently_are_not_quoted() {
+        assert_eq!(super::quote_arg("my notes.txt; $HOME *").as_deref(), Some("'my notes.txt; $HOME *'"));
+        for arg in ["it's", "a\\b", "wow!"] {
+            assert_eq!(super::quote_arg(arg), None, "{arg:?}");
+        }
     }
 }

@@ -156,6 +156,9 @@ paths start at your current folder. Prefer explicit paths for remote work.
   without an exit code is loss too. After a grace delay, recovery runs on
   every OS. Streams end on loss; reattach after the restarted event.
   Pending input/attach may be unavailable: retry after recovery.
+  `restore_commands = ["hx"]` in `~/.config/herdr-core/config.toml` types
+  a listed program that led the foreground back into the new shell, with
+  its arguments. `HERDR_PANE_RESTORE_KEY` stays the same across recovery.
 - Once work is accepted: `hc kill <t>`, then `hc rm <t>`. Only clean up
   terminals you started; `hc ls` includes your user's other live work.
 - `hc update` also restarts an older running core when the installed binary

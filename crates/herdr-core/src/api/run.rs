@@ -192,6 +192,11 @@ pub(super) async fn start(
     }
 }
 
+/// Set in every terminal: the same after recovery, never another terminal's,
+/// on this core or any other, so programs can keep state per terminal (an
+/// editor's open files). Named as Herdr 1 names it, which such programs read.
+pub(crate) const RESTORE_KEY: &str = "HERDR_PANE_RESTORE_KEY";
+
 /// Per-program runtime fields, shared by initial runs and replacement shells.
 pub(crate) fn terminal_env(
     core: &Core,
@@ -200,6 +205,7 @@ pub(crate) fn terminal_env(
     mut env: BTreeMap<String, String>,
 ) -> (BTreeMap<String, String>, String) {
     env.insert("HC_TERMINAL_ID".into(), crate::terminals::address(id));
+    env.insert(RESTORE_KEY.into(), format!("{}-{}", core.info.id, crate::terminals::address(id)));
     env.insert("HC_TERMINAL_SOCKET".into(), core.paths.socket.display().to_string());
     let scope = crate::sweep::token();
     env.insert(crate::sweep::VAR.into(), scope.clone());
@@ -215,7 +221,7 @@ pub(crate) fn child_env(base: BTreeMap<String, String>, extra: BTreeMap<String, 
         .into_iter()
         .filter(|(k, _)| {
             !IDENTITY_VARS.contains(&k.as_str())
-                && !["HC_TERMINAL_ID", crate::sweep::VAR, crate::sweep::RUNTIME].contains(&k.as_str())
+                && !["HC_TERMINAL_ID", RESTORE_KEY, crate::sweep::VAR, crate::sweep::RUNTIME].contains(&k.as_str())
         })
         .collect();
     crate::platform::merge_env(&mut env, extra);

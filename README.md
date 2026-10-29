@@ -43,6 +43,21 @@ For a terminal you want to keep even if its program is lost, use `hc run --keep`
 Recovery starts a fresh shell, never reruns the task.
 A normal exit or an explicit kill still ends it.
 
+A program you'd want back, like your editor, can be typed into that shell.
+List it in `~/.config/herdr-core/config.toml`:
+
+```toml
+restore_commands = ["hx"]
+```
+
+If it led the terminal's foreground job when the program was lost, its command line, with its arguments, is typed into the new shell in its folder.
+Quit it and you're back at that shell.
+`hc server restart` and a core crash keep programs running, so nothing is typed then.
+The list in effect at recovery decides, so a program taken off it isn't restored.
+An argument no shell reads back the same (a quote, a backslash, a `!`) means a plain shell; core.log says why.
+Every terminal also gets `HERDR_PANE_RESTORE_KEY`, which stays the same across recovery, for programs that keep state per terminal.
+On Windows only a terminal's own program is seen, not one started from its shell.
+
 ## Agents run agents
 
 Give an agent `hc --skill`. It prints the agent docs in one read, including how to delegate, wait, report back, and clean up.

@@ -23,6 +23,11 @@ pub struct Terminal {
     pub keep: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_cwd: Option<String>,
+    /// What led its foreground job when its program was last lost (kept from
+    /// an earlier loss if nothing was seen since): typed into the replacement
+    /// shell when `restore_commands` names it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lost_foreground: Option<crate::foreground::Foreground>,
     /// Only caller overrides, never the inherited core environment.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub restart_env: BTreeMap<String, String>,
@@ -257,6 +262,7 @@ impl Registry {
                 cwd: new.cwd,
                 keep: new.keep,
                 last_cwd: None,
+                lost_foreground: None,
                 restart_env: BTreeMap::new(),
                 restart_after_ms: 0,
                 restart_delay_ms: 0,
@@ -329,8 +335,11 @@ impl Registry {
                     "holder_lost" | "stopped_by_restart" | "server_stop" | "host_shutdown" | "signaled"
                 );
             t.state = if pending { "live" } else { "finished" }.into();
-            if let Some(f) = &t.foreground {
+            if let Some(f) = t.foreground.take() {
                 t.last_cwd = Some(f.cwd.clone());
+                if pending {
+                    t.lost_foreground = Some(f);
+                }
             }
             if pending {
                 t.schedule_restart(now_ms);
@@ -341,7 +350,6 @@ impl Registry {
             t.signal = signal;
             t.reason = Some(reason.into());
             t.finished_ms = (!pending).then_some(now_ms);
-            t.foreground = None;
         }
     }
 
@@ -408,6 +416,7 @@ const PRIVATE: &[&str] = &[
     "win32_input",
     "afar",
     "last_cwd",
+    "lost_foreground",
     "restart_env",
     "restart_after_ms",
     "restart_delay_ms",
@@ -485,6 +494,32 @@ mod tests {
                 assert_eq!(r.terminals[&id].finished_ms.is_none(), pending);
             }
         }
+    }
+
+    #[test]
+    fn a_loss_remembers_the_foreground_until_another_loss_sees_a_new_one() {
+        let seen = |name: &str| crate::foreground::Foreground {
+            pid: 9,
+            name: name.into(),
+            argv: vec![name.into(), "a.rs".into()],
+            cwd: format!("/{name}"),
+        };
+        let mut r = Registry::default();
+        let id = r.create(NewTerminal { keep: true, ..new(None) }, 0).unwrap();
+        let lose = |r: &mut Registry, now: Option<&str>| {
+            r.terminals.get_mut(&id).unwrap().foreground = now.map(seen);
+            r.finish(id, None, None, "holder_lost", 1);
+            r.terminals[&id].lost_foreground.as_ref().map(|f| f.name.clone())
+        };
+        assert_eq!(lose(&mut r, Some("hx")).as_deref(), Some("hx"));
+        assert_eq!(r.terminals[&id].last_cwd.as_deref(), Some("/hx"));
+        assert!(r.terminals[&id].foreground.is_none());
+        assert_eq!(lose(&mut r, None).as_deref(), Some("hx"), "a replacement nobody saw yet still restores");
+        assert_eq!(lose(&mut r, Some("sh")).as_deref(), Some("sh"));
+        let done = r.create(new(None), 0).unwrap();
+        r.terminals.get_mut(&done).unwrap().foreground = Some(seen("hx"));
+        r.finish(done, Some(0), None, "exited", 1);
+        assert!(r.terminals[&done].lost_foreground.is_none(), "only kept losses restore");
     }
 
     #[test]

@@ -360,3 +360,114 @@ fn stopped_kept_terminal_returns_at_next_start() {
     assert_eq!(r["state"], "live");
     wait_until("shell after start", || get(&s, &t)["pid"].is_number());
 }
+
+/// A session whose PATH has `fakeed`: `tail` under another name, so it runs
+/// until interrupted and shows its arguments as the OS keeps them.
+fn editor_session() -> (Session, std::path::PathBuf) {
+    let mut s = Session::new();
+    s.env.push(("HC_FOREGROUND_MS".into(), "30".into()));
+    let bin = s.root.join("bin");
+    std::fs::create_dir(&bin).unwrap();
+    let tail = ["/usr/bin/tail", "/bin/tail"].into_iter().find(|p| std::path::Path::new(p).exists()).unwrap();
+    std::os::unix::fs::symlink(tail, bin.join("fakeed")).unwrap();
+    s.env.push(("PATH".into(), format!("{}:{}", bin.display(), std::env::var("PATH").unwrap())));
+    let dir = s.root.join("project");
+    std::fs::create_dir(&dir).unwrap();
+    std::fs::write(dir.join("my notes.txt"), "notes\n").unwrap();
+    (s, std::fs::canonicalize(&dir).unwrap())
+}
+
+fn allow(s: &Session, toml: &str) {
+    let dir = s.root.join("config/herdr-core");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("config.toml"), toml).unwrap();
+}
+
+/// What a reboot does: the core and the holder, with every program, gone at once.
+fn lose_everything(s: &Session) {
+    let status = s.json(&["server", "status"]);
+    unsafe {
+        libc::kill(status["pid"].as_i64().unwrap() as i32, libc::SIGKILL);
+        libc::kill(status["holder"]["pid"].as_i64().unwrap() as i32, libc::SIGKILL);
+    }
+    wait_until("core gone", || !s.connect_ok());
+}
+
+fn foreground_is(s: &Session, t: &str, argv: &[&str], cwd: &std::path::Path) -> bool {
+    let f = &get(s, t)["foreground"];
+    f["argv"] == serde_json::json!(argv) && f["cwd"] == cwd.display().to_string()
+}
+
+/// Waits until the state on disk, all a reboot leaves, has it running `argv`.
+fn saved_running(s: &Session, t: &str, argv: &[&str]) {
+    wait_until("foreground saved", || {
+        let state: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(s.root.join("state/herdr-core/test/terminals.json")).unwrap())
+                .unwrap();
+        let ts = state["terminals"].as_object().unwrap();
+        ts.values().any(|r| r["address"] == t && r["foreground"]["argv"] == serde_json::json!(argv))
+    });
+}
+
+fn restore_key(s: &Session, t: &str, tag: &str) -> String {
+    s.json(&["send", t, &format!("printf '{tag}:%s:\\n' \"$HERDR_PANE_RESTORE_KEY\"")]);
+    let mut key = None;
+    wait_until("key printed", || {
+        let text = text(s, t);
+        key = text.lines().find_map(|l| l.strip_prefix(&format!("{tag}:"))?.strip_suffix(':')).map(String::from);
+        key.is_some()
+    });
+    key.unwrap()
+}
+
+#[test]
+fn an_allowed_program_is_typed_into_the_replacement_shell_after_a_reboot() {
+    let (s, dir) = editor_session();
+    let t = run(&s, &["--keep"]);
+    let key = restore_key(&s, &t, "before");
+    assert!(key.ends_with(&format!("-{t}")) && key.len() <= 64, "{key}");
+    s.json(&["send", &t, &format!("cd '{}' && fakeed -f 'my notes.txt'", dir.display())]);
+    wait_until("editor runs", || foreground_is(&s, &t, &["fakeed", "-f", "my notes.txt"], &dir));
+    // Allowed only now, while it runs: what counts is the list at recovery.
+    allow(&s, "restore_commands = [\"fakeed\"]\n");
+    saved_running(&s, &t, &["fakeed", "-f", "my notes.txt"]);
+    let old = get(&s, &t)["pid"].as_i64().unwrap();
+    lose_everything(&s);
+    wait_until("editor typed into a new shell", || {
+        foreground_is(&s, &t, &["fakeed", "-f", "my notes.txt"], &dir) && get(&s, &t)["pid"] != old
+    });
+    assert_eq!(get(&s, &t)["argv"], serde_json::json!(["/bin/sh"]), "the terminal runs a shell, not the editor");
+    s.json(&["keys", &t, "ctrl+c"]);
+    wait_until("quitting leaves its shell", || get(&s, &t)["foreground"]["argv"] == serde_json::json!(["/bin/sh"]));
+    assert_eq!(restore_key(&s, &t, "after"), key, "the key outlives the loss");
+    let other = run(&s, &["--keep"]);
+    assert_ne!(restore_key(&s, &other, "other"), key);
+}
+
+#[test]
+fn a_program_taken_off_the_list_comes_back_as_a_plain_shell() {
+    let (s, dir) = editor_session();
+    allow(&s, "restore_commands = [\"fakeed\"]\n");
+    // Started as the terminal's own program, not from a shell.
+    let t = s.json(&["run", "--bg", "--keep", "--cwd", &dir.display().to_string(), "fakeed", "-f", "my notes.txt"])
+        ["address"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    wait_until("editor runs", || foreground_is(&s, &t, &["fakeed", "-f", "my notes.txt"], &dir));
+    saved_running(&s, &t, &["fakeed", "-f", "my notes.txt"]);
+    lose_everything(&s);
+    wait_until("editor back in a shell", || {
+        foreground_is(&s, &t, &["fakeed", "-f", "my notes.txt"], &dir)
+            && get(&s, &t)["argv"] == serde_json::json!(["/bin/sh"])
+    });
+    saved_running(&s, &t, &["fakeed", "-f", "my notes.txt"]);
+    allow(&s, "restore_commands = []\n");
+    let old = get(&s, &t)["pid"].as_i64().unwrap();
+    lose_everything(&s);
+    wait_until("a new shell", || get(&s, &t)["pid"].as_i64().is_some_and(|p| p != old));
+    // With the editor typed in, it would sit on this line unread.
+    s.json(&["send", &t, "echo plain-$((40 + 2))"]);
+    wait_until("the shell runs what is sent", || text(&s, &t).contains("plain-42"));
+    assert_eq!(get(&s, &t)["foreground"]["argv"], serde_json::json!(["/bin/sh"]));
+}

@@ -1,4 +1,6 @@
 //! Lost kept records stay live without a holder until a replacement shell starts.
+use crate::config::RestoreCommand;
+use crate::foreground::Foreground;
 use crate::holder_proto as proto;
 use crate::runtime::{Core, now_ms};
 use crate::terminals::{KEEP_RETRY_MS, Terminal};
@@ -23,6 +25,42 @@ impl Terminal {
         self.restart_after_ms = now + self.restart_delay_ms;
         self.program_started_ms = None;
     }
+}
+
+/// Typed before the shell reads it, the line passes through the terminal's
+/// own line editing, which keeps at most this much on macOS (MAX_CANON).
+const MAX_TYPED: usize = 1024;
+
+/// What to type into the replacement shell, started in `cwd`, of a terminal
+/// whose program was lost while `lost` led its foreground job: None unless
+/// `allowed` names it (as the OS names it, or by its argv[0]); an error when
+/// it can't be typed back as it ran. It is started again through PATH, by
+/// the allowed name, with its own arguments.
+pub(crate) fn restore_line(lost: &Foreground, allowed: &[RestoreCommand], cwd: &str) -> Option<Result<String, String>> {
+    let argv0 = lost.argv.first().and_then(|a| std::path::Path::new(a).file_name()).and_then(|n| n.to_str());
+    let name = allowed.iter().find(|c| c.as_str() == lost.name || Some(c.as_str()) == argv0)?;
+    let line = || {
+        if lost.argv.is_empty() {
+            return Err("its arguments could not be read".to_string());
+        }
+        if lost.cwd != cwd {
+            return Err(format!("it ran in {}, but the shell starts in {cwd}", lost.cwd));
+        }
+        let mut line = name.as_str().to_string();
+        for arg in &lost.argv[1..] {
+            let quoted = Some(arg)
+                .filter(|a| !a.chars().any(char::is_control))
+                .and_then(|a| crate::platform::quote_arg(a))
+                .ok_or_else(|| format!("its argument {arg:?} cannot be typed into a shell"))?;
+            line = format!("{line} {quoted}");
+        }
+        line.push('\r');
+        match line.len() <= MAX_TYPED {
+            true => Ok(line),
+            false => Err(format!("its command line is over {MAX_TYPED} bytes")),
+        }
+    };
+    Some(line())
 }
 
 impl Core {
@@ -53,6 +91,10 @@ impl Core {
             return;
         }
         let base_env = crate::platform::program_env().await;
+        let allowed = crate::config::load(&self.paths.config).map(|c| c.restore_commands).unwrap_or_else(|e| {
+            eprintln!("core: restoring no programs: {}", e.message);
+            Vec::new()
+        });
         let mut st = self.lock();
         if st.stopping
             || self.restart.load(Ordering::SeqCst)
@@ -82,6 +124,13 @@ impl Core {
                 .unwrap_or_else(|| {
                     env.get("HOME").or_else(|| env.get("USERPROFILE")).cloned().unwrap_or_else(|| "/".into())
                 });
+            let typed = match t.lost_foreground.as_ref().and_then(|lost| restore_line(lost, &allowed, &cwd)) {
+                Some(Err(why)) => {
+                    eprintln!("core: {} gets a plain shell: {why}", t.address);
+                    None
+                }
+                typed => typed.and_then(Result::ok),
+            };
             let (env, scope) = crate::api::terminal_env(&self, id, &cwd, env);
             t.scope = Some(scope);
             t.holder = Some(instance);
@@ -105,6 +154,10 @@ impl Core {
             self.save(&st);
             if let Some(link) = st.link(id) {
                 link.send(&proto::json_frame(proto::SPAWN, id, &spawn));
+                // The holder starts the shell before it reads the next frame, so this reaches the new shell.
+                if let Some(line) = typed {
+                    link.input(id, line.as_bytes());
+                }
             }
         }
     }
@@ -112,7 +165,42 @@ impl Core {
 
 #[cfg(test)]
 mod tests {
+    use super::restore_line;
+    use crate::foreground::Foreground;
     use crate::terminals::{NewTerminal, Registry};
+
+    fn lost(name: &str, argv: &[&str]) -> Foreground {
+        Foreground { pid: 9, name: name.into(), argv: argv.iter().map(|a| a.to_string()).collect(), cwd: "/r".into() }
+    }
+
+    fn allowed(names: &[&str]) -> Vec<crate::config::RestoreCommand> {
+        names.iter().map(|n| n.to_string().try_into().unwrap()).collect()
+    }
+
+    #[test]
+    fn only_allowed_programs_are_typed_again_through_path_by_their_allowed_name() {
+        let hx = allowed(&["hx"]);
+        let line = |f: &Foreground| restore_line(f, &hx, "/r").map(Result::unwrap);
+        let typed = line(&lost("hx", &["/opt/bin/hx", "src/main.rs", "my notes.txt"]));
+        assert_eq!(typed.as_deref(), Some("hx 'src/main.rs' 'my notes.txt'\r"));
+        assert_eq!(line(&lost("helix-term", &["hx"])).as_deref(), Some("hx\r"), "argv[0] names it too");
+        assert_eq!(line(&lost("vim", &["vim", "a"])), None);
+        assert_eq!(line(&lost("zsh", &["-zsh"])), None);
+        assert_eq!(restore_line(&lost("hx", &["hx"]), &[], "/r"), None, "an empty list restores nothing");
+    }
+
+    #[test]
+    fn an_allowed_program_that_cannot_be_typed_back_as_it_ran_is_refused() {
+        let hx = allowed(&["hx"]);
+        let refused = |f: Foreground, cwd: &str| restore_line(&f, &hx, cwd).expect("allowed").unwrap_err();
+        assert!(refused(lost("hx", &[]), "/r").contains("arguments could not be read"));
+        assert!(refused(lost("hx", &["hx"]), "/home").contains("ran in /r, but the shell starts in /home"));
+        for arg in ["it's", "a\nb"] {
+            assert!(refused(lost("hx", &["hx", arg]), "/r").contains("cannot be typed"), "{arg:?}");
+        }
+        let long = "x".repeat(super::MAX_TYPED);
+        assert!(refused(lost("hx", &["hx", &long]), "/r").contains("over 1024 bytes"));
+    }
 
     #[test]
     fn retries_back_off_forever_and_reset_only_after_a_stable_program() {

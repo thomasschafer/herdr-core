@@ -25,6 +25,35 @@ pub struct Config {
     /// timeout on top), and to send anything at all before its line is
     /// given up and dialed again (default 30).
     pub machine_timeout: Option<f64>,
+    /// Programs a kept terminal starts again after a loss (default none): if
+    /// one led its foreground job when the program was lost, its command line
+    /// is typed into the replacement shell.
+    #[serde(default)]
+    pub restore_commands: Vec<RestoreCommand>,
+}
+
+/// A `restore_commands` entry. It is typed into a shell and found through
+/// PATH, so it is a plain program name: no path, no option, nothing to quote.
+#[derive(Deserialize, Clone, Debug, PartialEq)]
+#[serde(try_from = "String")]
+pub struct RestoreCommand(String);
+
+impl RestoreCommand {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl TryFrom<String> for RestoreCommand {
+    type Error = String;
+
+    fn try_from(name: String) -> Result<Self, String> {
+        let plain = name.bytes().all(|b| b.is_ascii_alphanumeric() || b"_.-".contains(&b));
+        match plain && name.bytes().any(|b| b.is_ascii_alphanumeric()) && !name.starts_with('-') {
+            true => Ok(RestoreCommand(name)),
+            false => Err(format!("restore_commands {name:?}: use a program name like \"hx\", not a path")),
+        }
+    }
 }
 
 impl Config {
@@ -95,6 +124,18 @@ mod tests {
         assert_eq!(key("ctrl+A").unwrap(), DetachKey { byte: 0x01, code: 97 });
         for bad in ["alt+x", "ctrl+", "ctrl+ab", "ctrl+1", "x"] {
             assert_eq!(key(bad).unwrap_err().kind, "config", "{bad}");
+        }
+    }
+
+    #[test]
+    fn restore_commands_are_plain_program_names() {
+        let names = |text: &str| toml::from_str::<Config>(text).map(|c| c.restore_commands);
+        assert!(names("").unwrap().is_empty());
+        let ok = names("restore_commands = [\"hx\", \"nvim.appimage\", \"my_ed-2\"]").unwrap();
+        assert_eq!(ok.iter().map(RestoreCommand::as_str).collect::<Vec<_>>(), ["hx", "nvim.appimage", "my_ed-2"]);
+        for bad in ["", "/usr/bin/hx", "bin/hx", "-hx", "..", "h x", "hx;rm", "C:\\hx.exe"] {
+            let err = names(&format!("restore_commands = [{bad:?}]")).map(drop).unwrap_err().to_string();
+            assert!(err.contains("not a path"), "{bad:?}: {err}");
         }
     }
 }
