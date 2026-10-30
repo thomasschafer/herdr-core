@@ -54,3 +54,17 @@ fn a_remote_missed_invalidates_unfiltered_document_readers_with_the_local_sequen
     drop(core);
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn a_line_to_type_never_goes_to_a_core_that_would_drop_it() {
+    let line = |features: Value| Line::new(tokio::sync::mpsc::unbounded_channel().0, &json!({ "features": features }));
+    let (old, new) = (line(json!(["shell"])), line(json!(["shell", "type"])));
+    let typed = json!({ "argv": ["sh"], "type": "hx ." });
+    let err = can_type(&old, "box", "terminal.run", &typed, "hc machine update box").unwrap_err();
+    assert_eq!((err.kind.as_str(), err.hint.as_str()), ("needs_update", "hc machine update box"));
+    assert!(err.message.contains("box's hc is older"), "{}", err.message);
+    assert!(can_type(&new, "box", "terminal.run", &typed, "").is_ok());
+    for plain in [json!({ "argv": ["sh"] }), json!({ "argv": ["sh"], "type": null })] {
+        assert!(can_type(&old, "box", "terminal.run", &plain, "").is_ok(), "{plain}");
+    }
+}

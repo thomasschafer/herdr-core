@@ -103,6 +103,7 @@ error, exited); inspect its screen.
 hc run cargo test                  # wait, stream output, return its exit code
 hc run "cd app && bun test"        # one quoted string is a shell command
 hc run --bg --name web bun dev     # background server; exit comes as a note
+hc run --bg --type 'hx .'          # a shell with this typed in: it stays after
 hc wait web --output ready         # match output printed AFTER this wait starts
 hc read web --lines 100
 ```

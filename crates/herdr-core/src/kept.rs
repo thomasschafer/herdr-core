@@ -2,6 +2,7 @@
 use crate::config::RestoreCommand;
 use crate::foreground::Foreground;
 use crate::holder_proto as proto;
+use crate::input::TypedLine;
 use crate::runtime::{Core, now_ms};
 use crate::terminals::{KEEP_RETRY_MS, Terminal};
 use std::sync::Arc;
@@ -27,16 +28,16 @@ impl Terminal {
     }
 }
 
-/// Typed before the shell reads it, the line passes through the terminal's
-/// own line editing, which keeps at most this much on macOS (MAX_CANON).
-const MAX_TYPED: usize = 1024;
-
 /// What to type into the replacement shell, started in `cwd`, of a terminal
 /// whose program was lost while `lost` led its foreground job: None unless
 /// `allowed` names it (as the OS names it, or by its argv[0]); an error when
 /// it can't be typed back as it ran. It is started again through PATH, by
 /// the allowed name, with its own arguments.
-pub(crate) fn restore_line(lost: &Foreground, allowed: &[RestoreCommand], cwd: &str) -> Option<Result<String, String>> {
+pub(crate) fn restore_line(
+    lost: &Foreground,
+    allowed: &[RestoreCommand],
+    cwd: &str,
+) -> Option<Result<TypedLine, String>> {
     let argv0 = lost.argv.first().and_then(|a| std::path::Path::new(a).file_name()).and_then(|n| n.to_str());
     let name = allowed.iter().find(|c| c.as_str() == lost.name || Some(c.as_str()) == argv0)?;
     let line = || {
@@ -54,11 +55,7 @@ pub(crate) fn restore_line(lost: &Foreground, allowed: &[RestoreCommand], cwd: &
                 .ok_or_else(|| format!("its argument {arg:?} cannot be typed into a shell"))?;
             line = format!("{line} {quoted}");
         }
-        line.push('\r');
-        match line.len() <= MAX_TYPED {
-            true => Ok(line),
-            false => Err(format!("its command line is over {MAX_TYPED} bytes")),
-        }
+        TypedLine::try_from(line).map_err(|why| format!("its command line can't be typed: {why}"))
     };
     Some(line())
 }
@@ -156,7 +153,7 @@ impl Core {
                 link.send(&proto::json_frame(proto::SPAWN, id, &spawn));
                 // The holder starts the shell before it reads the next frame, so this reaches the new shell.
                 if let Some(line) = typed {
-                    link.input(id, line.as_bytes());
+                    link.input(id, &line.with_enter());
                 }
             }
         }
@@ -180,10 +177,10 @@ mod tests {
     #[test]
     fn only_allowed_programs_are_typed_again_through_path_by_their_allowed_name() {
         let hx = allowed(&["hx"]);
-        let line = |f: &Foreground| restore_line(f, &hx, "/r").map(Result::unwrap);
+        let line = |f: &Foreground| restore_line(f, &hx, "/r").map(|l| l.unwrap().as_str().to_string());
         let typed = line(&lost("hx", &["/opt/bin/hx", "src/main.rs", "my notes.txt"]));
-        assert_eq!(typed.as_deref(), Some("hx 'src/main.rs' 'my notes.txt'\r"));
-        assert_eq!(line(&lost("helix-term", &["hx"])).as_deref(), Some("hx\r"), "argv[0] names it too");
+        assert_eq!(typed.as_deref(), Some("hx 'src/main.rs' 'my notes.txt'"));
+        assert_eq!(line(&lost("helix-term", &["hx"])).as_deref(), Some("hx"), "argv[0] names it too");
         assert_eq!(line(&lost("vim", &["vim", "a"])), None);
         assert_eq!(line(&lost("zsh", &["-zsh"])), None);
         assert_eq!(restore_line(&lost("hx", &["hx"]), &[], "/r"), None, "an empty list restores nothing");
@@ -198,7 +195,7 @@ mod tests {
         for arg in ["it's", "a\nb"] {
             assert!(refused(lost("hx", &["hx", arg]), "/r").contains("cannot be typed"), "{arg:?}");
         }
-        let long = "x".repeat(super::MAX_TYPED);
+        let long = "x".repeat(crate::input::MAX_TYPED);
         assert!(refused(lost("hx", &["hx", &long]), "/r").contains("over 1024 bytes"));
     }
 

@@ -487,6 +487,7 @@ Arguments:
 
 Options:
       --json               JSON output even in a terminal
+      --type <LINE>        Typed into the program as it starts, then Enter, as a person typing ahead: a shell runs it once it is ready and keeps it in its history, and stays when it ends. Plain text, under 1024 bytes
       --name <NAME>        Name, unique among live terminals: 1-32 of a-z 0-9 - _ 
       --cwd <CWD>          Working directory (default: where hc runs; through the API, the core's; with --on, that machine's home)
       --on <MACHINE>       Run it on another machine (see `hc machine ls`); its address is `machine/t7`

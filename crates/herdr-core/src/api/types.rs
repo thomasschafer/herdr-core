@@ -194,6 +194,12 @@ pub struct RunParams {
     #[arg(skip)]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub line: Option<String>,
+    /// Typed into the program as it starts, then Enter, as a person typing
+    /// ahead: a shell runs it once it is ready and keeps it in its history,
+    /// and stays when it ends. Plain text, under 1024 bytes.
+    #[arg(long = "type", value_name = "LINE")]
+    #[serde(default, rename = "type", skip_serializing_if = "Option::is_none")]
+    pub typed: Option<crate::input::TypedLine>,
     /// Name, unique among live terminals: 1-32 of a-z 0-9 - _ .
     #[arg(long)]
     pub name: Option<String>,

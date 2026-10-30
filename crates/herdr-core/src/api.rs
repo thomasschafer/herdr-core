@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 pub const GENERATION: u32 = 1;
-pub const FEATURES: &[&str] = &["framed", "attach", "events", "status", "shell"];
+pub const FEATURES: &[&str] = &["framed", "attach", "events", "status", "shell", "type"];
 pub const FINISHED_LINES: usize = 1000;
 /// A terminal's identity: fixed at start from whoever starts it.
 pub const IDENTITY_VARS: &[&str] = &["TERM", "TERM_PROGRAM", "TERM_PROGRAM_VERSION", "COLORTERM"];

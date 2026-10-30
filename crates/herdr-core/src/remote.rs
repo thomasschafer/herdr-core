@@ -1016,6 +1016,7 @@ async fn forward_once(core: &Core, m: &Machine, method: &str, mut params: Value)
             format!("hc machine update {}", m.name),
         ));
     }
+    can_type(&line, &m.name, method, &params, &format!("hc machine update {}", m.name))?;
     let reply = line.call(&m.name, method, params, deadline).await.map_err(|e| match e.kind.as_str() {
         "unknown_method" => RpcError::new(
             "needs_update",
@@ -1039,6 +1040,16 @@ async fn forward_once(core: &Core, m: &Machine, method: &str, mut params: Value)
     Ok(reply)
 }
 
+/// An older core would start the program but drop the line to type into it.
+fn can_type(line: &Line, name: &str, method: &str, params: &Value, fix: &str) -> Result<(), RpcError> {
+    match method == "terminal.run" && !params["type"].is_null() && !line.features.iter().any(|f| f == "type") {
+        true => {
+            Err(RpcError::new("needs_update", format!("{name}'s hc is older and can't type into what it runs"), fix))
+        }
+        false => Ok(()),
+    }
+}
+
 pub async fn forward_to(core: &Core, to: &To, method: &str, params: Value) -> Result<Value, RpcError> {
     match to {
         To::Machine(m) => forward(core, m, method, params).await,
@@ -1047,6 +1058,7 @@ pub async fn forward_to(core: &Core, to: &To, method: &str, params: Value) -> Re
             let line = found
                 .ok_or_else(|| RpcError::new("unavailable", format!("{name} is not connected"), "try again later"))?;
             let calls_me = core.lock().peers.get(id).map(|p| p.calls_me.clone()).unwrap_or_default();
+            can_type(&line, name, method, &params, "update hc there")?;
             let deadline = deadline_for(core, method, &params);
             let reply = line.call(name, method, params, deadline).await?;
             Ok(if method.starts_with("doc.") { reply } else { localize(core, name, &[calls_me.as_str()], reply) })

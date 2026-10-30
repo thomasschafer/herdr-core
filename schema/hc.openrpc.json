@@ -1318,6 +1318,10 @@
         ],
         "type": "object"
       },
+      "TypedLine": {
+        "description": "A line typed into a program as it starts, then Enter, as if a person typed\nit ahead: the program reads it once it is ready, with no wait for it to\nsettle, and a shell keeps it in its history. Plain text only, so it can't\npress keys of its own, and short enough for the terminal's line editing.",
+        "type": "string"
+      },
       "WaitResult": {
         "properties": {
           "children": {
@@ -1750,6 +1754,22 @@
               "number",
               "null"
             ]
+          }
+        },
+        {
+          "description": "Typed into the program as it starts, then Enter, as a person typing\nahead: a shell runs it once it is ready and keeps it in its history,\nand stays when it ends. Plain text, under 1024 bytes.",
+          "name": "type",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TypedLine"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Typed into the program as it starts, then Enter, as a person typing\nahead: a shell runs it once it is ready and keeps it in its history,\nand stays when it ends. Plain text, under 1024 bytes."
           }
         },
         {

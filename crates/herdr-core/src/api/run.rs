@@ -159,7 +159,12 @@ pub(super) async fn start(
         let spawn = proto::Spawn { argv: p.argv, env, cwd, cols, rows };
         st.reg.terminals.get_mut(&id).expect("just created").holder = Some(instance);
         core.save(&st);
-        st.link(id).expect("assigned holder").send(&proto::json_frame(proto::SPAWN, id, &spawn));
+        let link = st.link(id).expect("assigned holder");
+        link.send(&proto::json_frame(proto::SPAWN, id, &spawn));
+        // The holder starts the program before it reads the next frame, so this reaches it.
+        if let Some(line) = &p.typed {
+            link.input(id, &line.with_enter());
+        }
         (id, rx)
     };
     let spawn_ms = std::env::var("HC_SPAWN_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(10_000);

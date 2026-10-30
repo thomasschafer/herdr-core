@@ -58,6 +58,9 @@ An argument no shell reads back the same (a quote, a backslash, a `!`) means a p
 Every terminal also gets `HERDR_PANE_RESTORE_KEY`, which stays the same across recovery, for programs that keep state per terminal.
 On Windows only a terminal's own program is seen, not one started from its shell.
 
+To start a shell with a command already typed into it, use `hc run --type 'hx .'`.
+The shell runs it as soon as it is ready, keeps it in its history, and is still there when the command ends.
+
 ## Agents run agents
 
 Give an agent `hc --skill`. It prints the agent docs in one read, including how to delegate, wait, report back, and clean up.

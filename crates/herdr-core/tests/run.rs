@@ -75,3 +75,38 @@ fn a_program_that_says_it_stopped_working_returns_and_a_slow_one_keeps_running()
         "{full}"
     );
 }
+
+#[test]
+fn a_typed_line_runs_in_the_new_shell_at_once_and_the_shell_stays() {
+    let s = Session::new();
+    s.json(&["ls"]); // the core is up: what is timed is the run
+    let started = std::time::Instant::now();
+    let t = run(&s, &["--type", "sh -c 'echo typed-$((6*7))'", "sh"]);
+    wait_until("typed line ran", || text(&s, &t).lines().any(|l| l.trim() == "typed-42"));
+    if !slow_runner() {
+        let took = started.elapsed();
+        assert!(took < std::time::Duration::from_millis(600), "typed ahead, not after the output settles: {took:?}");
+    }
+    assert_eq!(get(&s, &t)["state"], "live", "the shell outlives what it ran");
+    s.json(&["send", &t, "echo after-$((1+1))"]);
+    wait_until("shell still reads", || text(&s, &t).lines().any(|l| l.trim() == "after-2"));
+}
+
+#[test]
+fn a_line_that_cannot_be_typed_as_plain_text_starts_nothing() {
+    let s = Session::new();
+    s.json(&["ls"]);
+    let long = "x".repeat(1024);
+    for (bad, why) in
+        [("", "empty"), ("a\nb", "control character"), ("a\x1b[A", "control character"), (&long, "over 1024")]
+    {
+        let (code, err) = s.err(&["--json", "run", "--bg", "--type", bad, "sh"]);
+        assert_ne!(code, 0);
+        assert!(err.to_string().contains(why), "{bad:?}: {err}");
+        let mut c = s.connect();
+        let r = c.call(1, "terminal.run", serde_json::json!({"argv": ["sh"], "type": bad}));
+        assert_eq!(r["error"]["data"]["kind"], "invalid_params", "{bad:?}: {r}");
+        assert!(r.to_string().contains(why), "{bad:?}: {r}");
+    }
+    assert_eq!(s.json(&["ls", "--all"])["terminals"].as_array().map(Vec::len), Some(0), "nothing started");
+}

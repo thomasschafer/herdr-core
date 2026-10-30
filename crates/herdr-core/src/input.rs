@@ -18,6 +18,61 @@ const STARTUP_MS: u64 = 10_000;
 /// The longest a send waits for a starting agent to settle.
 const SETTLE_MAX: Duration = Duration::from_secs(5);
 
+/// Typed before the program reads it, a line passes through the terminal's
+/// own line editing, which keeps at most this much on macOS (MAX_CANON).
+pub(crate) const MAX_TYPED: usize = 1024;
+
+/// A line typed into a program as it starts, then Enter, as if a person typed
+/// it ahead: the program reads it once it is ready, with no wait for it to
+/// settle, and a shell keeps it in its history. Plain text only, so it can't
+/// press keys of its own, and short enough for the terminal's line editing.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[serde(try_from = "String", into = "String")]
+#[schemars(with = "String")]
+pub struct TypedLine(String);
+
+impl TypedLine {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// The bytes a terminal gets: the line, then Enter.
+    pub fn with_enter(&self) -> Vec<u8> {
+        [self.0.as_bytes(), b"\r"].concat()
+    }
+}
+
+impl TryFrom<String> for TypedLine {
+    type Error = String;
+
+    fn try_from(line: String) -> Result<Self, String> {
+        if line.is_empty() {
+            return Err("the line to type is empty".into());
+        }
+        if line.chars().any(char::is_control) {
+            return Err(format!("the line to type {line:?} has a control character: only plain text can be typed"));
+        }
+        match line.len() < MAX_TYPED {
+            true => Ok(TypedLine(line)),
+            false => Err(format!("the line to type is over {MAX_TYPED} bytes with its Enter")),
+        }
+    }
+}
+
+impl From<TypedLine> for String {
+    fn from(line: TypedLine) -> String {
+        line.0
+    }
+}
+
+impl std::str::FromStr for TypedLine {
+    type Err = String;
+
+    fn from_str(line: &str) -> Result<Self, String> {
+        line.to_string().try_into()
+    }
+}
+
 /// A person's typing, as it affects agent input to one terminal.
 #[derive(Default)]
 pub struct Gate {

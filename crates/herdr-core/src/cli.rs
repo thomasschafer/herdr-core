@@ -624,6 +624,7 @@ fn flags_after_task(paths: &Paths, p: RunParams) -> Result<(RunParams, bool), Rp
         argv: q.argv,
         name: q.name.or(p.name),
         cwd: q.cwd.or(p.cwd),
+        typed: q.typed.or(p.typed),
         on: q.on.or(p.on),
         labels: [p.labels, q.labels].concat(),
         parent: q.parent.or(p.parent),
