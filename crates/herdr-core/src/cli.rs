@@ -303,7 +303,8 @@ fn bare(paths: &Paths, json: bool) -> Result<Option<Out>, RpcError> {
     let chosen = picker::pick("herdr-core", &orders).ok_or_else(cancelled)?;
     let address = if chosen.is_empty() {
         // Our shell if we have one, else the machine's own (Windows has no $SHELL).
-        let argv: Vec<String> = std::env::var("SHELL").into_iter().filter(|s| !s.is_empty()).collect();
+        let argv: Vec<String> =
+            std::env::var("SHELL").ok().filter(|s| !s.is_empty()).map(crate::platform::shell_argv).unwrap_or_default();
         let r = call(paths, "terminal.run", json!({"argv": argv, "cwd": here(), "env": identity_env()}))?;
         r["address"].as_str().unwrap_or_default().to_string()
     } else if let Some(machine) = chosen.strip_prefix('+') {

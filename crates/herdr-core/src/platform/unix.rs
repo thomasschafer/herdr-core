@@ -157,7 +157,14 @@ pub fn exit_signal(status: &std::process::ExitStatus) -> Option<i32> {
 
 /// This machine's own shell, as a person here gets it.
 pub fn own_shell() -> Vec<String> {
-    vec![std::env::var("SHELL").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "/bin/sh".into())]
+    shell_argv(std::env::var("SHELL").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "/bin/sh".into()))
+}
+
+/// `shell` as a person here starts it. On macOS a login shell, as Terminal and
+/// iTerm start one: a core started from the Dock has launchd's bare PATH, and
+/// only login profiles add the rest (path_helper's /etc/paths, Homebrew).
+pub fn shell_argv(shell: String) -> Vec<String> {
+    if cfg!(target_os = "macos") { vec![shell, "-l".into()] } else { vec![shell] }
 }
 
 /// One argument as `own_shell` reads it back, typed at its prompt. sh, bash,
@@ -437,6 +444,12 @@ pub mod console {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_persons_shell_is_a_login_shell_on_macos_only() {
+        let expected: &[&str] = if cfg!(target_os = "macos") { &["/bin/zsh", "-l"] } else { &["/bin/zsh"] };
+        assert_eq!(super::shell_argv("/bin/zsh".into()), expected);
+    }
+
     #[test]
     fn arguments_any_unix_shell_reads_differently_are_not_quoted() {
         assert_eq!(super::quote_arg("my notes.txt; $HOME *").as_deref(), Some("'my notes.txt; $HOME *'"));

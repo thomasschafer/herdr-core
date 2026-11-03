@@ -436,9 +436,9 @@ fn an_allowed_program_is_typed_into_the_replacement_shell_after_a_reboot() {
     wait_until("editor typed into a new shell", || {
         foreground_is(&s, &t, &["fakeed", "-f", "my notes.txt"], &dir) && get(&s, &t)["pid"] != old
     });
-    assert_eq!(get(&s, &t)["argv"], serde_json::json!(["/bin/sh"]), "the terminal runs a shell, not the editor");
+    assert_eq!(get(&s, &t)["argv"], own_shell("/bin/sh"), "the terminal runs a shell, not the editor");
     s.json(&["keys", &t, "ctrl+c"]);
-    wait_until("quitting leaves its shell", || get(&s, &t)["foreground"]["argv"] == serde_json::json!(["/bin/sh"]));
+    wait_until("quitting leaves its shell", || get(&s, &t)["foreground"]["argv"] == own_shell("/bin/sh"));
     assert_eq!(restore_key(&s, &t, "after"), key, "the key outlives the loss");
     let other = run(&s, &["--keep"]);
     assert_ne!(restore_key(&s, &other, "other"), key);
@@ -458,8 +458,7 @@ fn a_program_taken_off_the_list_comes_back_as_a_plain_shell() {
     saved_running(&s, &t, &["fakeed", "-f", "my notes.txt"]);
     lose_everything(&s);
     wait_until("editor back in a shell", || {
-        foreground_is(&s, &t, &["fakeed", "-f", "my notes.txt"], &dir)
-            && get(&s, &t)["argv"] == serde_json::json!(["/bin/sh"])
+        foreground_is(&s, &t, &["fakeed", "-f", "my notes.txt"], &dir) && get(&s, &t)["argv"] == own_shell("/bin/sh")
     });
     saved_running(&s, &t, &["fakeed", "-f", "my notes.txt"]);
     allow(&s, "restore_commands = []\n");
@@ -469,5 +468,5 @@ fn a_program_taken_off_the_list_comes_back_as_a_plain_shell() {
     // With the editor typed in, it would sit on this line unread.
     s.json(&["send", &t, "echo plain-$((40 + 2))"]);
     wait_until("the shell runs what is sent", || text(&s, &t).contains("plain-42"));
-    assert_eq!(get(&s, &t)["foreground"]["argv"], serde_json::json!(["/bin/sh"]));
+    assert_eq!(get(&s, &t)["foreground"]["argv"], own_shell("/bin/sh"));
 }

@@ -266,6 +266,12 @@ pub fn run(s: &Session, args: &[&str]) -> String {
     s.json(&[&["run", "--bg"], args].concat())["address"].as_str().unwrap().to_string()
 }
 
+/// The argv a terminal with no program runs `shell` as: a login shell on macOS.
+pub fn own_shell(shell: &str) -> Value {
+    let login: &[&str] = if cfg!(target_os = "macos") { &["-l"] } else { &[] };
+    serde_json::json!([&[shell], login].concat())
+}
+
 pub fn get(s: &Session, t: &str) -> Value {
     s.json(&["get", t])
 }

@@ -26,6 +26,11 @@ pub fn own_shell() -> Vec<String> {
     [exe, "-NoExit", "-Command", hook].map(String::from).to_vec()
 }
 
+/// `shell` as a person here starts it.
+pub fn shell_argv(shell: String) -> Vec<String> {
+    vec![shell]
+}
+
 /// One argument as `own_shell` (PowerShell) reads it back, typed at its
 /// prompt: single quotes are literal, and PowerShell also takes the curly
 /// ones as quotes, so any of them inside has no quoting.

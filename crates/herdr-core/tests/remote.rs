@@ -312,7 +312,7 @@ fn a_shell_or_a_shell_line_there_uses_that_machines_own_shell() {
 
     let t = conn.call(1, "terminal.run", json!({"on": "rohan"}))["result"]["address"].as_str().unwrap().to_string();
     wait_until("its shell", || text(&s, &t).contains("rohans own shell"));
-    assert_eq!(get(&s, &t)["argv"], json!([shell]));
+    assert_eq!(get(&s, &t)["argv"], own_shell(shell.to_str().unwrap()));
 
     let line = "echo $((6 * 7))";
     let r = conn.call(2, "terminal.run", json!({"on": "rohan", "line": line, "wait": true}))["result"].clone();
