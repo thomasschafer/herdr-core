@@ -196,9 +196,31 @@ pub async fn exited(child: &mut tokio::process::Child) {
     .await;
 }
 
-/// An exec starts its own process group.
+/// An exec starts its own process group, with no signals blocked (see `unblock_signals`).
 pub fn exec_group(cmd: &mut tokio::process::Command) {
     cmd.process_group(0);
+    // SAFETY: unblock_signals only makes async-signal-safe calls.
+    unsafe {
+        cmd.pre_exec(|| unblock_signals());
+    }
+}
+
+/// For a `pre_exec` hook: lets the program about to run receive every signal. Rust passes a
+/// process's blocked signals on to what it starts, and whatever started the core may have
+/// blocked some, which would leave programs here unable to see SIGHUP or SIGTERM: only SIGKILL
+/// could end them, so they could not clean up, and the sweep would wait for its last step.
+///
+/// # Safety
+/// Only async-signal-safe calls, as a `pre_exec` hook needs.
+unsafe fn unblock_signals() -> io::Result<()> {
+    unsafe {
+        let mut none: libc::sigset_t = std::mem::zeroed();
+        libc::sigemptyset(&mut none);
+        match libc::pthread_sigmask(libc::SIG_SETMASK, &none, std::ptr::null_mut()) {
+            0 => Ok(()),
+            error => Err(io::Error::from_raw_os_error(error)),
+        }
+    }
 }
 
 /// An exec's process group: it and what it starts, unless they leave it.
@@ -304,7 +326,7 @@ pub fn spawn_pty(
             if libc::setsid() < 0 || libc::ioctl(0, libc::TIOCSCTTY as _, 0) < 0 {
                 return Err(io::Error::last_os_error());
             }
-            Ok(())
+            unblock_signals()
         });
     }
     let child = cmd.spawn()?;
@@ -444,6 +466,43 @@ pub mod console {
 
 #[cfg(test)]
 mod tests {
+    use std::os::unix::process::ExitStatusExt;
+
+    /// A shell that sends itself SIGTERM, then exits 7 if that did nothing.
+    const TERMINATES_ITSELF: [&str; 3] = ["/bin/sh", "-c", "kill -TERM $$; sleep 1; exit 7"];
+
+    /// Runs `body` with SIGTERM blocked on this thread, as when something that started the
+    /// core blocked it, then blocks it no more.
+    fn with_sigterm_blocked<T>(body: impl FnOnce() -> T) -> T {
+        let block = |how: libc::c_int| unsafe {
+            let mut term: libc::sigset_t = std::mem::zeroed();
+            libc::sigemptyset(&mut term);
+            libc::sigaddset(&mut term, libc::SIGTERM);
+            assert_eq!(libc::pthread_sigmask(how, &term, std::ptr::null_mut()), 0);
+        };
+        block(libc::SIG_BLOCK);
+        let result = body();
+        block(libc::SIG_UNBLOCK);
+        result
+    }
+
+    #[test]
+    fn a_terminals_program_gets_signals_its_starter_blocked() {
+        let argv: Vec<String> = TERMINATES_ITSELF.map(String::from).to_vec();
+        let env = [("PATH".to_string(), "/usr/bin:/bin".to_string())].into();
+        let (_pty, mut child) = with_sigterm_blocked(|| super::spawn_pty(&argv, &env, "/", 80, 24).unwrap());
+        assert_eq!(child.wait().unwrap().signal(), Some(libc::SIGTERM));
+    }
+
+    #[tokio::test]
+    async fn an_exec_gets_signals_its_starter_blocked() {
+        let mut cmd = tokio::process::Command::new(TERMINATES_ITSELF[0]);
+        cmd.args(&TERMINATES_ITSELF[1..]);
+        super::exec_group(&mut cmd);
+        let mut child = with_sigterm_blocked(|| cmd.spawn().unwrap());
+        assert_eq!(child.wait().await.unwrap().signal(), Some(libc::SIGTERM));
+    }
+
     #[test]
     fn a_persons_shell_is_a_login_shell_on_macos_only() {
         let expected: &[&str] = if cfg!(target_os = "macos") { &["/bin/zsh", "-l"] } else { &["/bin/zsh"] };
