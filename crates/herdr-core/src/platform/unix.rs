@@ -119,19 +119,40 @@ pub fn file_identity(m: &std::fs::Metadata) -> String {
 
 /// Starts `cmd` in its own session (ending the terminal it was started from
 /// won't end it), stdin/stdout to /dev/null, stderr to `log`.
+///
+/// It starts only once its starter has let go of it, as an orphan: endpoint
+/// security software can give a program the treatment its parent gets when it
+/// starts, and a core started from a shell it slows would pass that to every
+/// terminal (seen on macOS: every process start in them took twice as long).
 pub fn spawn_detached(mut cmd: Command, log: std::fs::File) -> io::Result<()> {
     use std::process::Stdio;
     cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(log);
     unsafe {
         cmd.pre_exec(|| {
             libc::setsid();
-            Ok(())
+            orphan()
         });
     }
-    let mut child = cmd.spawn()?;
-    // Reap it if it ever exits while we live (the holder outlives crashed cores).
-    std::thread::spawn(move || child.wait());
+    // The child we get only forks the program and exits.
+    cmd.spawn()?.wait()?;
     Ok(())
+}
+
+/// In a forked child, before exec: forks again and returns in the grandchild
+/// once the middle process has exited and it has a new parent. Only
+/// async-signal-safe calls, as it runs between fork and exec.
+fn orphan() -> io::Result<()> {
+    let middle = unsafe { libc::getpid() };
+    match unsafe { libc::fork() } {
+        -1 => Err(io::Error::last_os_error()),
+        0 => {
+            while unsafe { libc::getppid() } == middle {
+                unsafe { libc::usleep(1000) };
+            }
+            Ok(())
+        }
+        _ => unsafe { libc::_exit(0) },
+    }
 }
 
 /// Puts the hc at `from` where `dest` is: a copy beside it that `works`,
@@ -507,6 +528,35 @@ mod tests {
     fn a_persons_shell_is_a_login_shell_on_macos_only() {
         let expected: &[&str] = if cfg!(target_os = "macos") { &["/bin/zsh", "-l"] } else { &["/bin/zsh"] };
         assert_eq!(super::shell_argv("/bin/zsh".into()), expected);
+    }
+
+    #[test]
+    fn a_detached_program_starts_after_its_starter_has_let_go_of_it() {
+        let dir =
+            std::env::temp_dir().join(format!("hc-detached-{}-{}", std::process::id(), super::super::random_hex()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let seen = dir.join("ppid");
+        let mut cmd = std::process::Command::new("/bin/sh");
+        cmd.args(["-c", "echo $PPID > \"$1.tmp\" && mv \"$1.tmp\" \"$1\"", "sh"]).arg(&seen);
+        super::spawn_detached(cmd, std::fs::File::create(dir.join("log")).unwrap()).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !seen.exists() {
+            assert!(std::time::Instant::now() < deadline, "the detached program never ran");
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let ppid: u32 = std::fs::read_to_string(&seen).unwrap().trim().parse().unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_ne!(ppid, std::process::id(), "it ran as the starter's child");
+    }
+
+    #[test]
+    fn a_detached_program_that_cannot_start_is_an_error() {
+        let log =
+            std::env::temp_dir().join(format!("hc-detached-{}-{}.log", std::process::id(), super::super::random_hex()));
+        let cmd = std::process::Command::new("/nonexistent/hc-test-program");
+        let started = super::spawn_detached(cmd, std::fs::File::create(&log).unwrap());
+        std::fs::remove_file(&log).unwrap();
+        assert_eq!(started.unwrap_err().kind(), std::io::ErrorKind::NotFound);
     }
 
     #[test]
