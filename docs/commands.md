@@ -24,6 +24,7 @@ Terminals
   label <t> k=v...            set labels
   keep <t> [--off]            replace lost programs with a shell (also run --keep)
                               signal death recovers too; streams end on loss, reattach
+  resume <t> -- <cmd...>      how its program starts again in that shell (agent hooks)
 
 Talk to programs
   send <t> <text>             paste text and press enter
@@ -458,6 +459,23 @@ Options:
       --json           JSON output even in a terminal
       --lines <LINES>  Lines of history above the screen [default: 0]
   -h, --help           Print help
+```
+
+## hc resume
+
+```text
+Say how its program starts again after a reboot: hc resume "$HC_TERMINAL_ID" -- claude --resume <id>
+
+Usage: hc resume [OPTIONS] <TERMINAL> -- <ARGV>...
+
+Arguments:
+  <TERMINAL>  The terminal: `t7`, a name, or `machine/t7` (an agent's own: `$HC_TERMINAL_ID`)
+  <ARGV>...   What starts it again: a program found through PATH, by its plain name, and its arguments
+
+Options:
+      --json     JSON output even in a terminal
+      --replace  Replace what the same program said before: it moved to another session
+  -h, --help     Print help
 ```
 
 ## hc rm

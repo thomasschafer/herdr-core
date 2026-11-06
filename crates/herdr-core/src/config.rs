@@ -29,29 +29,30 @@ pub struct Config {
     /// one led its foreground job when the program was lost, its command line
     /// is typed into the replacement shell.
     #[serde(default)]
-    pub restore_commands: Vec<RestoreCommand>,
+    pub restore_commands: Vec<ProgramName>,
 }
 
-/// A `restore_commands` entry. It is typed into a shell and found through
-/// PATH, so it is a plain program name: no path, no option, nothing to quote.
+/// A program typed into a shell and found through PATH (a `restore_commands`
+/// entry, or what `terminal.resume` starts): a plain name, with no path, no
+/// option and nothing to quote.
 #[derive(Deserialize, Clone, Debug, PartialEq)]
 #[serde(try_from = "String")]
-pub struct RestoreCommand(String);
+pub struct ProgramName(String);
 
-impl RestoreCommand {
+impl ProgramName {
     pub fn as_str(&self) -> &str {
         &self.0
     }
 }
 
-impl TryFrom<String> for RestoreCommand {
+impl TryFrom<String> for ProgramName {
     type Error = String;
 
     fn try_from(name: String) -> Result<Self, String> {
         let plain = name.bytes().all(|b| b.is_ascii_alphanumeric() || b"_.-".contains(&b));
         match plain && name.bytes().any(|b| b.is_ascii_alphanumeric()) && !name.starts_with('-') {
-            true => Ok(RestoreCommand(name)),
-            false => Err(format!("restore_commands {name:?}: use a program name like \"hx\", not a path")),
+            true => Ok(ProgramName(name)),
+            false => Err(format!("{name:?}: use a program name like \"hx\", not a path")),
         }
     }
 }
@@ -132,7 +133,7 @@ mod tests {
         let names = |text: &str| toml::from_str::<Config>(text).map(|c| c.restore_commands);
         assert!(names("").unwrap().is_empty());
         let ok = names("restore_commands = [\"hx\", \"nvim.appimage\", \"my_ed-2\"]").unwrap();
-        assert_eq!(ok.iter().map(RestoreCommand::as_str).collect::<Vec<_>>(), ["hx", "nvim.appimage", "my_ed-2"]);
+        assert_eq!(ok.iter().map(ProgramName::as_str).collect::<Vec<_>>(), ["hx", "nvim.appimage", "my_ed-2"]);
         for bad in ["", "/usr/bin/hx", "bin/hx", "-hx", "..", "h x", "hx;rm", "C:\\hx.exe"] {
             let err = names(&format!("restore_commands = [{bad:?}]")).map(drop).unwrap_err().to_string();
             assert!(err.contains("not a path"), "{bad:?}: {err}");

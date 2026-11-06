@@ -792,6 +792,7 @@ const ON_A_TERMINAL: &[&str] = &[
     "terminal.rm",
     "terminal.label",
     "terminal.keep",
+    "terminal.resume",
     "terminal.read",
     "terminal.send",
     "terminal.keys",

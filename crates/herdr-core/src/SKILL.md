@@ -160,6 +160,9 @@ paths start at your current folder. Prefer explicit paths for remote work.
   `restore_commands = ["hx"]` in `~/.config/herdr-core/config.toml` types
   a listed program that led the foreground back into the new shell, with
   its arguments. `HERDR_PANE_RESTORE_KEY` stays the same across recovery.
+  `hc resume "$HC_TERMINAL_ID" -- claude --resume <id>`, from an agent's
+  session-start hook, says what is typed instead, in the agent's folder,
+  until the agent quits; `--replace` only when it switched session.
 - Once work is accepted: `hc kill <t>`, then `hc rm <t>`. Only clean up
   terminals you started; `hc ls` includes your user's other live work.
 - `hc update` also restarts an older running core when the installed binary

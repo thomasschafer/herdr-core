@@ -154,6 +154,10 @@ impl Core {
     /// Keeps every live terminal's `foreground` current, with an event on each change.
     pub async fn watch_foreground(self: Arc<Self>) {
         let ms = std::env::var("HC_FOREGROUND_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(500);
+        let grace = std::env::var("HC_RESUME_GRACE_MS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(crate::kept::RESUME_GRACE_MS);
         loop {
             tokio::time::sleep(Duration::from_millis(ms)).await;
             let live: Vec<u32> = self.lock().reg.terminals.values().filter(|t| t.is_live()).map(|t| t.id()).collect();
@@ -161,13 +165,16 @@ impl Core {
                 let pgid = self.foreground(id).await;
                 let now = (pgid > 0).then(|| about(pgid)).flatten();
                 let mut st = self.lock();
-                let Some(t) = st.reg.terminals.get_mut(&id).filter(|t| t.is_live() && t.foreground != now) else {
-                    continue;
-                };
-                if let Some(f) = &now {
-                    t.last_cwd = Some(f.cwd.clone());
+                let shutting_down = st.stopping || self.restart.load(std::sync::atomic::Ordering::SeqCst);
+                let Some(t) = st.reg.terminals.get_mut(&id).filter(|t| t.is_live()) else { continue };
+                let changed = t.saw_foreground(now.clone(), crate::runtime::now_ms());
+                // Saved at once: a reboot soon after the program quit must not bring it back.
+                if !shutting_down && t.forget_ended_resume(crate::runtime::now_ms(), grace) {
+                    self.save(&st);
                 }
-                t.foreground = now.clone();
+                if !changed {
+                    continue;
+                }
                 self.save_soon();
                 self.emit(&mut st, "foreground", id, serde_json::to_value(&now).unwrap_or_default());
             }

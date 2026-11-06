@@ -47,6 +47,8 @@ enum Cmd {
     Label(LabelParams),
     /// Keep a live terminal after loss (--off disables).
     Keep(crate::api::KeepParams),
+    /// Say how its program starts again after a reboot: hc resume "$HC_TERMINAL_ID" -- claude --resume <id>.
+    Resume(crate::api::ResumeParams),
     /// Paste text into a terminal and press Enter (waits for a person to pause).
     Send(SendParams),
     /// Wait for your children (--children any) or one terminal; a message to you also ends it.
@@ -456,6 +458,11 @@ fn run(cmd: Option<Cmd>, json: bool, asked: bool) -> Result<Option<Out>, RpcErro
             let human = describe(&r);
             Out { json: r, human }
         }
+        Cmd::Resume(p) => {
+            let r = call("terminal.resume", to(&p))?;
+            let human = describe(&r);
+            Out { json: r, human }
+        }
         Cmd::Label(p) => {
             let r = call("terminal.label", to(&p))?;
             let human = describe(&r);
@@ -837,6 +844,7 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("rm", "terminal.rm"),
     ("label", "terminal.label"),
     ("keep", "terminal.keep"),
+    ("resume", "terminal.resume"),
     ("send", "terminal.send"),
     ("wait", "terminal.wait"),
     ("keys", "terminal.keys"),

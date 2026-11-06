@@ -55,8 +55,22 @@ Quit it and you're back at that shell.
 `hc server restart` and a core crash keep programs running, so nothing is typed then.
 The list in effect at recovery decides, so a program taken off it isn't restored.
 An argument no shell reads back the same (a quote, a backslash, a `!`) means a plain shell; core.log says why.
+A program can also say how it starts again itself, which is how agents reopen their session.
+An agent's session-start hook runs, inside the terminal:
+
+```sh
+hc resume "$HC_TERMINAL_ID" -- claude --resume "$session_id"
+```
+
+After a loss, that line is typed into the new shell, in the folder the agent ran in, instead of anything `restore_commands` would type.
+Quitting the agent forgets it, once another job (its shell) has led the terminal for 10 seconds; a reboot usually ends the agent a moment before the core, and that still resumes.
+A second call from the job that made the first is refused unless it passes `--replace`, for an agent that switched session (Claude Code's `/clear` or `/resume`).
+So a hook should pass `--replace` only then: a nested run started from inside the agent, such as `claude -p`, reports while the agent still leads the terminal, so starting a new session it can't take over.
+Two terminals that would resume the same line in the same folder resume it once.
+An agent that can't find the session, such as one closed before its first message, exits back to that shell.
 Every terminal also gets `HERDR_PANE_RESTORE_KEY`, which stays the same across recovery, for programs that keep state per terminal.
 On Windows only a terminal's own program is seen, not one started from its shell.
+So there, every agent in a terminal's shell is the same job: a resume lasts until a `--replace` call replaces it, even after its agent quits.
 
 To start a shell with a command already typed into it, use `hc run --type 'hx .'`.
 The shell runs it as soon as it is ready, keeps it in its history, and is still there when the command ends.

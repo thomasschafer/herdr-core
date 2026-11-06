@@ -19,9 +19,11 @@ pub const FINISHED_LINES: usize = 1000;
 pub const IDENTITY_VARS: &[&str] = &["TERM", "TERM_PROGRAM", "TERM_PROGRAM_VERSION", "COLORTERM"];
 
 mod doc;
+mod kept;
 mod run;
 mod types;
 use doc::*;
+use kept::*;
 mod waiting;
 use run::*;
 pub(crate) use run::{child_env, not_stopping, tail, terminal_env};
@@ -85,6 +87,9 @@ methods! { Ctx<'_>;
         errors ["not_found", "machine_unknown", "live"];
     "terminal.keep" => terminal_keep, KeepParams => Public,
         "Set whether a live terminal restarts as a shell after loss, including death by signal without an exit code. Exit with a code and explicit kill close it. Recovery runs on every OS after a grace delay, except while the core stops/restarts or Windows reports session shutdown. Streams end on loss; reattach after restarted.", errors ["not_found", "invalid_params"];
+    "terminal.resume" => terminal_resume, ResumeParams => Public,
+        "Say how the program leading a terminal starts again after a loss (a reboot or core crash): argv is typed into its replacement shell, in the program's folder, instead of a plain shell. Forgotten once another job has led the terminal for 10 s (the program quit). A second call from the same job is refused unless `replace` (it moved to another session). For agents' session-start hooks.",
+        errors ["not_found", "machine_unknown", "finished", "unavailable", "invalid_params", "conflict"];
     "terminal.label" => terminal_label, LabelParams => Public,
         "Set or remove labels (free-form `key=value`, never interpreted).",
         errors ["not_found", "machine_unknown", "invalid_params"];
@@ -297,25 +302,6 @@ async fn terminal_rm(core: Ctx<'_>, p: TerminalParams) -> Result<RemoveResult, R
     }
     core.remove(&mut st, id);
     Ok(RemoveResult { removed: crate::terminals::address(id) })
-}
-
-async fn terminal_keep(core: Ctx<'_>, p: KeepParams) -> Result<Public, RpcError> {
-    let id = resolve(core, &p.terminal)?;
-    let mut st = core.lock();
-    let t = st.reg.terminals.get_mut(&id).expect("resolved");
-    if !t.is_live() {
-        return Err(RpcError::invalid_params("only live terminals can be kept"));
-    }
-    t.keep = p.keep;
-    let public = Public(t.clone());
-    let lost = (!p.keep && t.holder.is_none()).then(|| t.reason.clone().unwrap_or_else(|| "holder_lost".into()));
-    core.emit(&mut st, "keep", id, json!({"keep": p.keep}));
-    if let Some(reason) = lost {
-        core.record_finish(&mut st, id, proto::Exit { code: None, signal: None }, &reason);
-        core.changed.notify_waiters();
-    }
-    core.save(&st);
-    Ok(public)
 }
 
 async fn terminal_label(core: Ctx<'_>, p: LabelParams) -> Result<Public, RpcError> {

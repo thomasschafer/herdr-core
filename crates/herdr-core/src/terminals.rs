@@ -28,6 +28,10 @@ pub struct Terminal {
     /// shell when `restore_commands` names it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lost_foreground: Option<crate::foreground::Foreground>,
+    /// What its foreground program said starts it again after a loss (see
+    /// `terminal.resume`); null once another job leads the terminal.
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::kept::lenient_resume")]
+    pub resume: Option<crate::kept::Resume>,
     /// Only caller overrides, never the inherited core environment.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub restart_env: BTreeMap<String, String>,
@@ -151,6 +155,51 @@ impl Terminal {
         self.is_live() && self.pid.is_none() && self.reason.as_deref().is_some_and(|r| r != "spawn_pending")
     }
 
+    /// Its foreground is now `now`, seen at `now_ms`; true if that changed.
+    /// Another job leading it starts the grace before its resume is forgotten.
+    pub(crate) fn saw_foreground(&mut self, now: Option<crate::foreground::Foreground>, now_ms: u64) -> bool {
+        if let (Some(f), Some(r)) = (&now, &mut self.resume) {
+            r.ended_ms = match r.pid == f.pid {
+                true => None,
+                false => r.ended_ms.or(Some(now_ms)),
+            };
+        }
+        if self.foreground == now {
+            return false;
+        }
+        if let Some(f) = &now {
+            self.last_cwd = Some(f.cwd.clone());
+        }
+        self.foreground = now;
+        true
+    }
+
+    /// Forgets its resume once another job has led it for the whole grace
+    /// (`grace_ms`): true if it did.
+    pub(crate) fn forget_ended_resume(&mut self, now_ms: u64, grace_ms: u64) -> bool {
+        let ended = self.resume.as_ref().and_then(|r| r.ended_ms);
+        if ended.is_some_and(|at| now_ms.saturating_sub(at) >= grace_ms) {
+            self.resume = None;
+            return true;
+        }
+        false
+    }
+
+    /// Takes `resume` from the job leading it now. One that job already said
+    /// is replaced only when asked (the program moved to another session), so
+    /// a nested run of the same program can't take it over.
+    pub(crate) fn set_resume(&mut self, resume: crate::kept::Resume, replace: bool) -> Result<(), RpcError> {
+        if !replace && self.resume.as_ref().is_some_and(|r| r.pid == resume.pid && r.ended_ms.is_none()) {
+            return Err(RpcError::new(
+                "conflict",
+                format!("{}'s program already said how it resumes", self.address),
+                "pass replace (--replace) when it moved to another session",
+            ));
+        }
+        self.resume = Some(resume);
+        Ok(())
+    }
+
     pub fn check_program(&self) -> Result<(), RpcError> {
         if self.is_live() && self.pid.is_none() && self.reason.is_some() {
             return Err(RpcError::new(
@@ -263,6 +312,7 @@ impl Registry {
                 keep: new.keep,
                 last_cwd: None,
                 lost_foreground: None,
+                resume: None,
                 restart_env: BTreeMap::new(),
                 restart_after_ms: 0,
                 restart_delay_ms: 0,
@@ -477,6 +527,41 @@ mod tests {
 
     fn new(name: Option<&str>) -> NewTerminal {
         NewTerminal { name: name.map(Into::into), argv: vec!["true".into()], cwd: "/".into(), ..Default::default() }
+    }
+
+    #[test]
+    fn a_resume_holds_while_its_job_leads_and_only_that_job_replaces_it_when_asked() {
+        let job = |pid: i32| crate::foreground::Foreground { pid, name: "node".into(), argv: vec![], cwd: "/r".into() };
+        let said = |pid: i32, line: &str| crate::kept::Resume {
+            line: line.parse().unwrap(),
+            cwd: "/r".into(),
+            pid,
+            ended_ms: None,
+        };
+        let grace = crate::kept::RESUME_GRACE_MS;
+        let mut r = Registry::default();
+        let id = r.create(NewTerminal { keep: true, ..new(None) }, 0).unwrap();
+        let t = r.terminals.get_mut(&id).unwrap();
+        assert!(t.saw_foreground(Some(job(7)), 0));
+        t.set_resume(said(7, "claude '--resume' 'a'"), false).unwrap();
+        let nested = t.set_resume(said(7, "claude '--resume' 'nested'"), false).unwrap_err();
+        assert_eq!(nested.kind, "conflict");
+        t.set_resume(said(7, "claude '--resume' 'b'"), true).unwrap();
+        assert_eq!(t.resume.as_ref().unwrap().line.as_str(), "claude '--resume' 'b'");
+        assert!(!t.saw_foreground(Some(job(7)), 0));
+        assert!(t.saw_foreground(None, 0), "an unreadable foreground says nothing about the job");
+        t.saw_foreground(Some(job(8)), 1000);
+        assert!(!t.forget_ended_resume(1000 + grace - 1, grace), "a reboot can end the program a moment first");
+        t.saw_foreground(Some(job(8)), 1000 + grace - 1);
+        assert!(t.forget_ended_resume(1000 + grace, grace), "another job led for the whole grace: it quit");
+        assert!(t.resume.is_none());
+        t.set_resume(said(8, "codex 'resume' 'c'"), false).unwrap();
+        t.saw_foreground(Some(job(9)), 0);
+        t.set_resume(said(9, "codex 'resume' 'd'"), false).unwrap();
+        assert_eq!(t.resume.as_ref().unwrap().pid, 9, "a new job replaces an ended job's resume");
+        t.saw_foreground(Some(job(3)), 0);
+        r.finish(id, None, None, "holder_lost", 1);
+        assert_eq!(r.terminals[&id].resume.as_ref().unwrap().pid, 9, "a loss in the grace keeps it for recovery");
     }
 
     #[test]

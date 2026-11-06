@@ -624,6 +624,30 @@
         ],
         "type": "object"
       },
+      "Resume": {
+        "description": "How a terminal's foreground program said it starts again after a loss\n(`terminal.resume`, e.g. an agent with the session to reopen): typed into\nthe replacement shell, which starts where the program ran. It is\nforgotten once another job has led the terminal for a while (see\n`RESUME_GRACE_MS`).",
+        "properties": {
+          "cwd": {
+            "description": "The program's folder when it said so.",
+            "type": "string"
+          },
+          "line": {
+            "$ref": "#/components/schemas/TypedLine",
+            "description": "What is typed, then Enter."
+          },
+          "pid": {
+            "description": "The leader of the foreground job that said so.",
+            "format": "int32",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "line",
+          "cwd",
+          "pid"
+        ],
+        "type": "object"
+      },
       "RunResult": {
         "properties": {
           "address": {
@@ -767,6 +791,17 @@
             "default": false,
             "description": "Whether the program ever sent a 7501 report.",
             "type": "boolean"
+          },
+          "resume": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Resume"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What its foreground program said starts it again after a loss (see\n`terminal.resume`); null once another job leads the terminal."
           },
           "rm": {
             "default": false,
@@ -1223,6 +1258,17 @@
             "default": false,
             "description": "Whether the program ever sent a 7501 report.",
             "type": "boolean"
+          },
+          "resume": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Resume"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What its foreground program said starts it again after a loss (see\n`terminal.resume`); null once another job leads the terminal."
           },
           "rm": {
             "default": false,
@@ -2033,6 +2079,94 @@
           "required": true,
           "schema": {
             "description": "The terminal: `t7`, a name, or `machine/t7`.",
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Terminal"
+        }
+      }
+    },
+    {
+      "description": "Say how the program leading a terminal starts again after a loss (a reboot or core crash): argv is typed into its replacement shell, in the program's folder, instead of a plain shell. Forgotten once another job has led the terminal for 10 s (the program quit). A second call from the same job is refused unless `replace` (it moved to another session). For agents' session-start hooks.",
+      "errors": [
+        {
+          "code": -32000,
+          "data": {
+            "kind": "not_found"
+          },
+          "message": "not_found"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "machine_unknown"
+          },
+          "message": "machine_unknown"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "finished"
+          },
+          "message": "finished"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "unavailable"
+          },
+          "message": "unavailable"
+        },
+        {
+          "code": -32602,
+          "data": {
+            "kind": "invalid_params"
+          },
+          "message": "invalid_params"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "conflict"
+          },
+          "message": "conflict"
+        }
+      ],
+      "name": "terminal.resume",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "description": "What starts it again: a program found through PATH, by its plain name, and its arguments.",
+          "name": "argv",
+          "required": true,
+          "schema": {
+            "description": "What starts it again: a program found through PATH, by its plain name, and its arguments.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        {
+          "description": "Replace what the same program said before: it moved to another session.",
+          "name": "replace",
+          "required": false,
+          "schema": {
+            "default": false,
+            "description": "Replace what the same program said before: it moved to another session.",
+            "type": "boolean"
+          }
+        },
+        {
+          "description": "The terminal: `t7`, a name, or `machine/t7` (an agent's own: `$HC_TERMINAL_ID`).",
+          "name": "terminal",
+          "required": true,
+          "schema": {
+            "description": "The terminal: `t7`, a name, or `machine/t7` (an agent's own: `$HC_TERMINAL_ID`).",
             "type": "string"
           }
         }

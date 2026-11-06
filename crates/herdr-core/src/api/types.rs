@@ -323,6 +323,19 @@ pub struct KeepParams {
     pub keep: bool,
 }
 
+#[derive(clap::Args, Serialize, Deserialize, JsonSchema)]
+pub struct ResumeParams {
+    /// The terminal: `t7`, a name, or `machine/t7` (an agent's own: `$HC_TERMINAL_ID`).
+    pub terminal: String,
+    /// Replace what the same program said before: it moved to another session.
+    #[arg(long)]
+    #[serde(default)]
+    pub replace: bool,
+    /// What starts it again: a program found through PATH, by its plain name, and its arguments.
+    #[arg(last = true, required = true, value_name = "ARGV")]
+    pub argv: Vec<String>,
+}
+
 #[derive(Serialize, JsonSchema)]
 pub struct RemoveResult {
     pub removed: String,

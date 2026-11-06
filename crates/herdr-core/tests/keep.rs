@@ -361,6 +361,45 @@ fn stopped_kept_terminal_returns_at_next_start() {
     wait_until("shell after start", || get(&s, &t)["pid"].is_number());
 }
 
+#[test]
+fn a_program_that_said_how_it_resumes_comes_back_that_way_after_a_reboot_until_it_quits() {
+    let (mut s, dir) = editor_session();
+    s.env.push(("HC_RESUME_GRACE_MS".into(), "300".into()));
+    let started = ["fakeed", "-f", "my notes.txt"];
+    let start = |t: &str| {
+        s.json(&["send", t, &format!("cd '{}' && fakeed -f 'my notes.txt'", dir.display())]);
+        wait_until("editor runs", || foreground_is(&s, t, &started, &dir));
+    };
+    let (t, twin) = (run(&s, &["--keep"]), run(&s, &["--keep"]));
+    start(&t);
+    start(&twin);
+    let (_, refused) = s.err(&["resume", &t, "--", "/usr/bin/fakeed"]);
+    assert!(refused["error"]["message"].as_str().unwrap().contains("not a path"), "{refused}");
+    // What its session-start hook says, not how it was started: no restore_commands needed.
+    let resumed = ["fakeed", "-n", "5", "-f", "my notes.txt"];
+    let say = |t: &str, argv: &[&str]| s.json(&[&["resume", t, "--"][..], argv].concat());
+    let r = say(&t, &resumed);
+    assert_eq!(r["resume"]["line"], "fakeed '-n' '5' '-f' 'my notes.txt'");
+    assert_eq!(r["resume"]["cwd"], dir.display().to_string());
+    say(&twin, &resumed);
+    let pid = |t: &str| get(&s, t)["pid"].as_i64();
+    let old = pid(&t);
+    lose_everything(&s);
+    wait_until("resumed in a new shell", || foreground_is(&s, &t, &resumed, &dir) && pid(&t) != old);
+    assert_eq!(get(&s, &t)["argv"], own_shell("/bin/sh"), "the terminal runs a shell, not the program");
+    wait_until("its twin is a new shell", || get(&s, &twin)["foreground"]["argv"] == own_shell("/bin/sh"));
+    assert!(!text(&s, &twin).contains("fakeed"), "one session is resumed once");
+    say(&t, &started);
+    s.json(&["keys", &t, "ctrl+c"]);
+    wait_until("quitting forgets it after the grace", || get(&s, &t)["resume"].is_null());
+    let old = pid(&t);
+    lose_everything(&s);
+    wait_until("a new shell", || pid(&t).is_some_and(|p| Some(p) != old));
+    s.json(&["send", &t, "echo plain-$((40 + 2))"]);
+    wait_until("a plain shell runs what is sent", || text(&s, &t).contains("plain-42"));
+    assert_eq!(get(&s, &t)["foreground"]["argv"], own_shell("/bin/sh"));
+}
+
 /// A session whose PATH has `fakeed`: `tail` under another name, so it runs
 /// until interrupted and shows its arguments as the OS keeps them.
 fn editor_session() -> (Session, std::path::PathBuf) {
